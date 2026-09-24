@@ -17,38 +17,22 @@ def hann_window(n):
     return [0.5 * (1.0 - math.cos(2.0 * math.pi * i / n)) for i in range(n)]
 
 
-def frame_signal(samples, frame_size, hop_size):
-    """Split samples into overlapping frames.
-
-    The final frame is zero-padded if the signal does not divide evenly.
-
-    Returns:
-        list of frames, each a list of length frame_size.
-    """
-    frames = []
-    position = 0
-    while position < len(samples):
-        frame = list(samples[position:position + frame_size])
-        frame.extend([0.0] * (frame_size - len(frame)))
-        frames.append(frame)
-        position += hop_size
-    return frames
+def analyse(samples, position, window):
+    # Cut one frame starting at position, taper it with the window, and
+    # transform it. Returns the frame's spectrum.
+    return fft([samples[position + i] * w for i, w in enumerate(window)])
 
 
-def overlap_add(frames, hop_size, output_length):
-    # Reconstruct a signal by summing overlapping frames back together.
-    # Correct reconstruction depends on the window and hop size satisfying
-    # the COLA condition. Hann at 50% or 75% overlap does; other hop sizes
-    # will produce amplitude modulation.
-    output = [0.0] * output_length
-    for index, frame in enumerate(frames):
-        start = index * hop_size
-        for offset, value in enumerate(frame):
-            target = start + offset
-            if target >= output_length:
-                break
-            output[target] += value
-    return output
+def synthesise(spectrum, gain_curve, window):
+    # Apply the gain curve, transform back, and taper again on the way out.
+    #
+    # The second taper is what makes spectral modification safe: changing
+    # bins introduces discontinuities at the frame edges, and windowing
+    # again suppresses them before the frames are summed. The imaginary
+    # part is discarded, which is only sound because the gain curve is
+    # symmetric and so preserves conjugate symmetry.
+    restored = ifft([z * g for z, g in zip(spectrum, gain_curve)])
+    return [restored[i].real * w for i, w in enumerate(window)]
 
 
 def process(samples, sample_rate, gain_curve_fn, frame_size=2048,
@@ -98,15 +82,11 @@ def process(samples, sample_rate, gain_curve_fn, frame_size=2048,
     total_frames = len(positions)
 
     for frame_index, position in enumerate(positions):
-        frame = [padded[position + i] * window[i] for i in range(frame_size)]
-
-        spectrum = fft(frame)
-        for i in range(frame_size):
-            spectrum[i] *= gain_curve[i]
-        restored = ifft(spectrum)
+        spectrum = analyse(padded, position, window)
+        frame = synthesise(spectrum, gain_curve, window)
 
         for i in range(frame_size):
-            accumulated[position + i] += restored[i].real * window[i]
+            accumulated[position + i] += frame[i]
             window_energy[position + i] += window[i] * window[i]
 
         if progress_fn is not None and frame_index % 16 == 0:

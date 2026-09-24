@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from filters import graphic_eq_curve
-from stft import cola_sum, frame_signal, hann_window, overlap_add, process
+from stft import analyse, cola_sum, hann_window, process, synthesise
 
 
 def music_like_signal(n, sample_rate=8000, seed=0):
@@ -75,22 +75,41 @@ def test_reconstruction_survives_a_non_cola_hop():
             assert abs(original - restored) < 1e-9, f"hop {hop}"
 
 
-def test_frame_and_reconstruct():
-    # frame_signal followed by overlap_add should be lossless.
-    signal = music_like_signal(1000)
-    # With hop == frame_size the frames tile without overlap, so summing
-    # them back reproduces the input exactly.
-    frames = frame_signal(signal, frame_size=64, hop_size=64)
-    rebuilt = overlap_add(frames, hop_size=64, output_length=len(signal))
-    for original, restored in zip(signal, rebuilt):
-        assert abs(original - restored) < 1e-12
+def test_analyse_applies_window_and_transform():
+    # A frame of constant 1.0 windowed by Hann has DC equal to the sum of
+    # the window, which for a periodic Hann is exactly n / 2.
+    signal = [1.0] * 128
+    window = hann_window(64)
+    spectrum = analyse(signal, 0, window)
+    assert len(spectrum) == 64
+    assert spectrum[0].real == pytest.approx(32.0)
+    assert spectrum[0].imag == pytest.approx(0.0)
 
 
-def test_frame_signal_pads_final_frame():
-    frames = frame_signal([1.0] * 100, frame_size=64, hop_size=64)
-    assert len(frames) == 2
-    assert all(len(f) == 64 for f in frames)
-    assert frames[1][36:] == [0.0] * 28
+def test_analyse_reads_from_the_given_offset():
+    signal = [0.0] * 64 + [1.0] * 64
+    window = hann_window(64)
+    assert abs(analyse(signal, 0, window)[0]) == pytest.approx(0.0)
+    assert analyse(signal, 64, window)[0].real == pytest.approx(32.0)
+
+
+def test_synthesise_is_windowed_identity_under_flat_gain():
+    # With a flat curve, synthesise undoes analyse except for the second
+    # taper, so the result is the input multiplied by the window squared.
+    signal = music_like_signal(128)
+    window = hann_window(64)
+    spectrum = analyse(signal, 0, window)
+    frame = synthesise(spectrum, [1.0] * 64, window)
+    for i in range(64):
+        assert frame[i] == pytest.approx(signal[i] * window[i] ** 2, abs=1e-12)
+
+
+def test_synthesise_returns_real_values():
+    signal = music_like_signal(128, seed=9)
+    window = hann_window(64)
+    spectrum = analyse(signal, 0, window)
+    curve = graphic_eq_curve(64, 8000, {"bass": 6.0, "treble": -6.0})
+    assert all(isinstance(v, float) for v in synthesise(spectrum, curve, window))
 
 
 def test_flat_eq_is_identity():
