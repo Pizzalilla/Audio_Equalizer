@@ -12,7 +12,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from filters import graphic_eq_curve
-from stft import analyse, cola_sum, hann_window, process, synthesise
+from stft import (analyse, cola_sum, hann_window, limit_peak, process,
+                  synthesise)
 
 
 def music_like_signal(n, sample_rate=8000, seed=0):
@@ -161,6 +162,53 @@ def test_output_stays_real():
                      frame_size=256)
     assert all(isinstance(v, float) for v in output)
     assert all(abs(v) < 10.0 for v in output)
+
+
+def test_limit_peak_leaves_quiet_signals_alone():
+    # Anything already within range must pass through untouched, or the
+    # flat-EQ identity would no longer hold.
+    signal = [0.5, -0.25, 0.75, -0.9]
+    scaled, attenuation, peak = limit_peak(signal)
+    assert scaled == signal
+    assert attenuation == 0.0
+    assert peak == pytest.approx(0.9)
+
+
+def test_limit_peak_scales_down_when_clipping():
+    signal = [1.5, -0.75, 3.0, -1.2]
+    scaled, attenuation, peak = limit_peak(signal)
+    assert peak == pytest.approx(3.0)
+    assert max(abs(v) for v in scaled) <= 1.0
+    assert attenuation == pytest.approx(20 * math.log10(3.0 / 0.999), abs=1e-6)
+
+
+def test_limit_peak_preserves_relative_balance():
+    # Uniform attenuation, so every ratio between samples survives.
+    signal = [2.0, -1.0, 0.5, 4.0]
+    scaled, _, _ = limit_peak(signal)
+    for i in range(len(signal) - 1):
+        assert scaled[i] / scaled[i + 1] == pytest.approx(
+            signal[i] / signal[i + 1])
+
+
+def test_limit_peak_handles_empty_and_silent_input():
+    assert limit_peak([]) == ([], 0.0, 0.0)
+    scaled, attenuation, peak = limit_peak([0.0, 0.0])
+    assert scaled == [0.0, 0.0] and attenuation == 0.0 and peak == 0.0
+
+
+def test_boosted_output_no_longer_clips():
+    # The end-to-end version: the bass-boost preset used to clip 45% of
+    # samples on a normal-level track.
+    signal = [0.8 * math.sin(2 * math.pi * 150 * i / 8000) for i in range(4000)]
+    raw = process(signal, 8000,
+                  lambda n, sr: graphic_eq_curve(n, sr, {"bass": 8.0}),
+                  frame_size=256)
+    assert max(abs(v) for v in raw) > 1.0, "expected the raw boost to overshoot"
+
+    limited, attenuation, _ = limit_peak(raw)
+    assert max(abs(v) for v in limited) <= 1.0
+    assert attenuation > 0
 
 
 def test_rejects_bad_frame_size():

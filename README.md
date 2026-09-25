@@ -1,7 +1,7 @@
 # Audio Equalizer
 
 A graphic equaliser and spectrum analyser built on a from-scratch implementation
-of the Fast Fourier Transform. No FFT library is used — the transform is written
+of the Fast Fourier Transform. No FFT library is used - the transform is written
 directly from the Cooley-Tukey recurrence.
 
 ## Setup

@@ -15,7 +15,7 @@ import streamlit as st
 from audio_io import read_wav, write_wav, to_mono
 from filters import BANDS, graphic_eq_curve
 from plots import plot_spectrum_comparison, plot_spectrogram, plot_waveform
-from stft import process
+from stft import limit_peak, process
 
 PRESETS = {
     "Flat": {"bass": 0, "mid": 0, "treble": 0},
@@ -111,6 +111,14 @@ def main():
         progress_fn=report,
     )
     bar.empty()
+
+    processed, attenuation_db, peak = limit_peak(processed)
+    if attenuation_db > 0:
+        st.info(
+            f"Boosting pushed the peak to {peak:.2f}, above what a WAV file "
+            f"can store. Output turned down by {attenuation_db:.1f} dB so it "
+            f"fits. The balance between bands is unchanged."
+        )
 
     original_bytes = to_wav_bytes([mono], sample_rate)
     processed_bytes = to_wav_bytes([processed], sample_rate)

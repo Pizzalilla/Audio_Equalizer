@@ -102,6 +102,37 @@ def process(samples, sample_rate, gain_curve_fn, frame_size=2048,
     return output
 
 
+def limit_peak(samples, ceiling=0.999):
+    """Scale a signal down if it would clip, leave it alone otherwise.
+
+    Boosting a band adds energy, so the equalised signal routinely exceeds
+    the [-1, 1] range a WAV file can store. Writing it anyway truncates
+    every offending sample, which is audible as harsh distortion rather
+    than as the boost the user asked for.
+
+    Attenuation is uniform, so the relative balance between frequencies is
+    untouched: this only changes how loud the result is, not its spectrum.
+
+    Returns:
+        (scaled_samples, attenuation_db, original_peak). attenuation_db is
+        0.0 when nothing needed doing.
+    """
+    if not samples:
+        return [], 0.0, 0.0
+
+    peak = max(abs(v) for v in samples)
+    # Only ever turn things down. Scaling quiet signals up would change the
+    # output for cases that were already correct, and would break the
+    # guarantee that a flat curve reproduces the input exactly.
+    if peak <= ceiling:
+        return list(samples), 0.0, peak
+
+    scale = ceiling / peak
+    return ([v * scale for v in samples],
+            -20.0 * math.log10(scale),
+            peak)
+
+
 def cola_sum(window, hop_size, num_frames=16):
     # Sum of the squared window shifted by hop_size, sampled in the middle
     # where coverage is complete. Used by the tests to check the COLA
